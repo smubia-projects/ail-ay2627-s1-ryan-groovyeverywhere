@@ -1,12 +1,20 @@
-# The demo API image needs only the recommender's modules and api/ (the data is downloaded at build time).
+# The demo API image needs only the student's analysis + recommender modules and api/. The pool data is
+# downloaded at startup from a private dataset; it is never part of the image or the repository.
 *
 !api/main.py
-!api/fetch_data.py
+!api/rate_limit.py
+!api/rate_limit_engine.py
 !api/requirements.txt
+!analyze.py
 !blind_test.py
+!capture_server.py
 !demo_server.py
+!evaluate.py
 !match.py
+!models.py
+!pool_db.py
 !recommend_song.py
 !results_index.py
 !scoring.py
 !song_languages.py
+!tag_ai.py
