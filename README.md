@@ -7,6 +7,17 @@ Built for the AI Lodge Hackathon (October 2026), track: Projects for Daily Life.
 * **Demo video:** https://www.youtube.com/watch?v=jMhueRJbihI
 * **Write-up:** [`DEVPOST_STORY.md`](DEVPOST_STORY.md)
 
+## AI Lodge hosted demo
+
+The SMU BIA AI Lodge hosts an online version of groovyeverywhere at **https://ail-ay2627-s1-ryan-groovyeverywhere.vercel.app**, from the club's fork [`smubia-projects/ail-ay2627-s1-ryan-groovyeverywhere`](https://github.com/smubia-projects/ail-ay2627-s1-ryan-groovyeverywhere).
+
+* **What it does:** search the pool (or pick a sample), choose a song, and get the two lists the booth demo shows: closest in sound, and sound plus the mood, rhythm and instruments you pick (every chosen feature in the top 35%), with the language chips. The ranking is this repository's own `recommend_song.recommend_query`, unchanged.
+* **What it leaves out:** bringing your own song (YouTube download and live Essentia analysis), tab capture and the "would add / skip" answers. Those need the analysis models and run only on the booth laptop.
+* **How:** [`api/`](api/main.py) is a small FastAPI service on Cloud Run; [`web/`](web/) is a static page on Vercel. No model runs at serve time and no audio is involved.
+* **The data, trimmed from Ryan's demo bundle (512 MB, 17,896 files):** [`api/export_pool.py`](api/export_pool.py) runs `blind_test.pool()` on the bundle and keeps only what `recommend_query` reads for the 8,933 pool songs: Sound (whole song + 3 parts, float16), the Sound rescaling, instruments, mood, rhythm, titles, links, AI tags and language labels (91 MB + 2 MB). The 278 MB index of ~30 s stretches (113,371 x 1,280) is replaced by each pool song's best-stretch similarity to every other pool song, computed once with `match.windows()` (two 8,933 x 8,933 int16 tables, read one row per request). Per-song files, link checks and tag tables are dropped (already applied). On 40 random songs x 2 settings the hosted lists and numbers are identical to the full pipeline. The files are not in git (the project's rule): the image downloads them from a release and checks their SHA-256.
+* **Licences:** the numbers come from Essentia models by the Music Technology Group (UPF), CC BY-NC-SA 4.0 (non-commercial, with credit); see [`NOTICE.md`](NOTICE.md).
+* **Local run:** `pip install -r api/requirements.txt`, put the exported files in `api/data/` (and `song_languages.csv` in `results/`), `uvicorn api.main:app --port 8080`, then serve `web/` after `node web/build.js`.
+
 ## 1. Problem statement
 
 Music recommendations tend to follow popularity: the more a song has been played, the more it gets pushed, and songs a listener would love get buried.
