@@ -1,0 +1,12 @@
+# The demo API image needs only the recommender's modules and api/ (the data is downloaded at build time).
+*
+!api/main.py
+!api/fetch_data.py
+!api/requirements.txt
+!blind_test.py
+!demo_server.py
+!match.py
+!recommend_song.py
+!results_index.py
+!scoring.py
+!song_languages.py
