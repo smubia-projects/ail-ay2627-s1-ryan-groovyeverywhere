@@ -35,3 +35,6 @@ voice_dev_choice.json
 # outputs of evaluate.py --split all (they mix in the sealed test songs); the committed reports are report_test / report_validation
 report.html
 evidence_summary.json
+
+# AI Lodge demo API: the pool data comes from a GitHub release (api/fetch_data.py), never from git
+api/data/
