@@ -28,6 +28,9 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 import zipfile
 
@@ -59,16 +62,36 @@ results_lock = threading.Lock()
 INSTRUMENTS: list[str] = []
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """The Hub answers a file request with a redirect to its CDN (a signed URL): send the token to the Hub only."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).hostname != urllib.parse.urlsplit(req.full_url).hostname:
+            new.remove_header("Authorization")
+        return new
+
+
+def download(url, token, dest):
+    """Plain streaming GET of one dataset file (huggingface_hub's downloader failed inside the Space on its HEAD check)."""
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"} if token else {})
+    opener = urllib.request.build_opener(_DropAuthOnRedirect)
+    try:
+        with opener.open(req, timeout=120) as r, open(dest, "wb") as f:
+            shutil.copyfileobj(r, f, 1 << 20)
+    except urllib.error.HTTPError as e:  # the status only: never the URL's query string or headers
+        raise RuntimeError(f"the pool bundle could not be downloaded (HTTP {e.code})") from None
+
+
 def fetch_bundle():
     """Downloads the bundle zip from the private dataset and unpacks the allowed members into the repo root."""
     if os.path.exists(os.path.join(ROOT, "results", "index.csv")):
         return  # already unpacked (a restart of the same container, or local development)
-    from huggingface_hub import hf_hub_download
-
     token = os.environ.pop("HF_DATA_TOKEN", "") or os.environ.pop("HF_TOKEN", "") or None
     tmp = tempfile.mkdtemp(prefix="groovy_bundle_")
     try:
-        path = hf_hub_download(DATA_REPO, DATA_FILE, repo_type="dataset", token=token, local_dir=tmp)
+        path = os.path.join(tmp, "bundle.zip")
+        download(f"https://huggingface.co/datasets/{DATA_REPO}/resolve/main/{DATA_FILE}", token, path)
         with zipfile.ZipFile(path) as z:
             members = [m for m in z.namelist() if ALLOWED.match(m)]
             for m in members:
