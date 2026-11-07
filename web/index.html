@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>groovyeverywhere</title>
+<meta name="description" content="Pick a song you love and find songs that sound like it: matched on sound, mood, rhythm and instruments across about 9,000 songs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">groovyeverywhere</div>
+  <div class="light"><span class="dot" id="dot"></span><span id="lightTxt">loading the song pool…</span></div>
+</header>
+<main>
+  <h1>pick a song you love.<br><em>we'll find its neighbours.</em></h1>
+  <p class="lede">Search the pool for a song, then see the songs that sound closest to it: matched on the overall sound, and on the mood, the beat and the instruments you care about.</p>
+
+  <div class="card">
+    <div class="row">
+      <input type="text" id="q" placeholder="search a song or an artist, e.g. Taylor Swift" autocomplete="off" spellcheck="false" aria-label="Search the song pool">
+      <button class="btn primary" id="go" type="button" disabled>search</button>
+    </div>
+    <div class="alt"><span>or start from:</span><span id="samples" class="row" style="gap:8px;display:inline-flex"></span></div>
+    <p class="note">This online demo starts from songs already in its pool of about 9,000 analysed songs. Bringing your own song (download and live audio analysis) runs only on the student's booth laptop.</p>
+    <div id="cands" aria-live="polite"></div>
+    <div id="msg"></div>
+  </div>
+
+  <section id="results" aria-live="polite">
+    <div class="topbar"><div class="now" style="margin:0"><span class="eyebrow">your song</span><h2 id="nowTitle"></h2><span id="nowArtist" class="mono" style="color:var(--muted)"></span></div></div>
+    <div id="heard" class="heard"></div>
+    <p class="howto"><b>How to read it:</b> every number is a ranking against the whole pool: <b>"closer than 99%"</b> means only 1% of the songs are closer to yours (not "99% the same"). Press ▶ to listen.</p>
+    <div class="langrow"><span class="eyebrow">show songs in</span>
+      <div class="chips" id="langs" role="group" aria-label="Languages of the recommended songs">
+        <button class="chipbtn" data-l="english" aria-pressed="true" type="button">English</button>
+        <button class="chipbtn" data-l="chinese" aria-pressed="true" type="button">Chinese</button>
+        <button class="chipbtn" data-l="korean" aria-pressed="true" type="button">Korean</button>
+        <button class="chipbtn" data-l="japanese" aria-pressed="false" type="button">Japanese</button>
+        <button class="chipbtn" data-l="other" aria-pressed="false" type="button">Other languages</button>
+      </div>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <h3><span class="num">1</span>closest in sound</h3>
+        <p class="sub">Matched on the overall sound alone.</p>
+        <div id="listA"></div>
+      </div>
+      <div class="col">
+        <h3><span class="num">2</span>sound, plus what you care about</h3>
+        <p class="sub">Also has to be a good match on every feature you pick (top 35% on each).</p>
+        <div class="chips" id="chips" role="group" aria-label="Features that must also match">
+          <button class="chipbtn" data-f="mood" aria-pressed="true" type="button">the mood</button>
+          <button class="chipbtn" data-f="rhythm" aria-pressed="true" type="button">the rhythm</button>
+          <button class="chipbtn" data-f="instruments" aria-pressed="true" type="button">the instruments</button>
+        </div>
+        <div id="listB"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>By Ryan Chan for the SMU BIA AI Lodge Hackathon. The songs were analysed offline with open Essentia audio models (Music Technology Group, UPF; CC BY-NC-SA 4.0); only numbers are stored, never audio. Titles and links come from YouTube. Hosted by the SMU BIA AI Lodge.</footer>
+</main>
+<div id="cta"></div>
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
