@@ -16,8 +16,20 @@
   <div class="light"><span class="dot" id="dot"></span><span id="lightTxt">loading the song pool…</span></div>
 </header>
 <main>
-  <h1>pick a song you love.<br><em>we'll find its neighbours.</em></h1>
-  <p class="lede">Search the pool for a song, then see the songs that sound closest to it: matched on the overall sound, and on the mood, the beat and the instruments you care about.</p>
+  <h1>tell us a song you love.<br><em>we'll find its neighbours.</em></h1>
+  <p class="lede">Play us a bit of a song, or pick one from our pool. We listen to the sound, the mood, the beat and the instruments, then find songs that feel the same among about 9,000 analysed songs.</p>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="row" style="align-items:center">
+      <button class="btn primary" id="recBtn" type="button" disabled>🎙 record 30 seconds</button>
+      <label class="btn" id="fileLbl" for="file" aria-disabled="true">upload a song clip</label>
+      <input type="file" id="file" accept="audio/*" hidden>
+      <span id="recTxt" class="mono" style="color:var(--muted)"></span>
+    </div>
+    <p class="note">Play the song near your microphone, or upload an audio file (the first minute is used). The audio is analysed on our server with the student's audio models and deleted straight away; only numbers are kept for the matching. Analysing takes about a minute.</p>
+    <div id="progress"><div><span id="stageTxt" class="mono">listening…</span> <span id="elapsed" class="mono" style="color:var(--muted)"></span></div><div class="stagebar"><i></i></div></div>
+    <div id="clipMsg"></div>
+  </div>
 
   <div class="card">
     <div class="row">
@@ -25,7 +37,7 @@
       <button class="btn primary" id="go" type="button" disabled>search</button>
     </div>
     <div class="alt"><span>or start from:</span><span id="samples" class="row" style="gap:8px;display:inline-flex"></span></div>
-    <p class="note">This online demo starts from songs already in its pool of about 9,000 analysed songs. Bringing your own song (download and live audio analysis) runs only on the student's booth laptop.</p>
+    <p class="note">Or start from a song that is already in the pool: instant, no analysis needed.</p>
     <div id="cands" aria-live="polite"></div>
     <div id="msg"></div>
   </div>
@@ -33,6 +45,7 @@
   <section id="results" aria-live="polite">
     <div class="topbar"><div class="now" style="margin:0"><span class="eyebrow">your song</span><h2 id="nowTitle"></h2><span id="nowArtist" class="mono" style="color:var(--muted)"></span></div></div>
     <div id="heard" class="heard"></div>
+    <div id="warn"></div>
     <p class="howto"><b>How to read it:</b> every number is a ranking against the whole pool: <b>"closer than 99%"</b> means only 1% of the songs are closer to yours (not "99% the same"). Press ▶ to listen.</p>
     <div class="langrow"><span class="eyebrow">show songs in</span>
       <div class="chips" id="langs" role="group" aria-label="Languages of the recommended songs">
@@ -62,7 +75,7 @@
     </div>
   </section>
 
-  <footer>By Ryan Chan for the SMU BIA AI Lodge Hackathon. The songs were analysed offline with open Essentia audio models (Music Technology Group, UPF; CC BY-NC-SA 4.0); only numbers are stored, never audio. Titles and links come from YouTube. Hosted by the SMU BIA AI Lodge.</footer>
+  <footer>By Ryan Chan for the SMU BIA AI Lodge Hackathon, hosted by the SMU BIA AI Lodge. Songs are analysed with the open Essentia audio models by the Music Technology Group (UPF), licensed CC BY-NC-SA 4.0 (non-commercial use). Your clip is deleted as soon as it has been analysed; only numbers are used, and nothing is stored about you. Titles and links of the pool songs come from YouTube.</footer>
 </main>
 <div id="cta"></div>
 <script src="./config.js"></script>

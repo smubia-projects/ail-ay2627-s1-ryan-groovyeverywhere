@@ -155,3 +155,6 @@ body.has-results .lede { display: none; }
 .ail-later { display: block; margin: 0 auto 22px; background: none; border: 0; color: #777; font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px; }
 @keyframes ail-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ail-up { from { transform: translateY(24px) scale(.95); opacity: 0; } to { transform: none; opacity: 1; } }
+label.btn { display: inline-flex; align-items: center; }
+label.btn[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+.btn.rec { background: var(--bad); color: #fff; border: 0; }
