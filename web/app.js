@@ -9,8 +9,8 @@ let POOL = 0, current = null, busy = false, ready = false;   // current = {kind:
 // The AI Lodge card, shown when a visitor reaches the analysis limit (HTTP 429). Links, labels and order are fixed.
 const CTA = {
   name: "groovyeverywhere", emoji: "🎧", accent: "#c2336f",
-  headline: "You've got great taste!",
-  description: "groovyeverywhere listened to {count} of your songs in this demo, matching sound, mood, rhythm and instruments across about 9,000 songs. Want to build projects like this? Join the AI Lodge.",
+  headline: "Your taste just found its match!",
+  description: "Want to build AI that understands music by mood, rhythm and sound? AI Lodge gives music lovers who code the team and the stage to ship their ideas.",
   programmeLink: "https://www.smubia.com/ailodge",
   showcaseLink: "https://www.smubia.com/Projects",
   githubLink: "https://github.com/smubia-projects/ail-ay2627-s1-ryan-groovyeverywhere",
@@ -24,7 +24,7 @@ async function api(path, opts = {}) {
   catch { throw new Error("We couldn't reach the demo server. Check your connection and try again."); }
   let d = {};
   try { d = await r.json(); } catch { /* not JSON: a platform error page */ }
-  if (r.status === 429) { showCta(Number(d.detail?.queries_used) || 0); throw new Handled(); }
+  if (r.status === 429) { showCta(); throw new Handled(); }
   if (r.status === 503) { showPaused(d.detail?.message || ""); throw new Handled(); }
   if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Something went wrong. Please try again.");
   return d;
@@ -236,9 +236,9 @@ function modal(html, label) {
   focusables[0]?.focus();
 }
 
-function showCta(count) {
+function showCta() {
   modal(`<div class="ail-top"><div class="ail-emoji">${CTA.emoji}</div><div class="ail-head">${esc(CTA.headline)}</div>
-      <div class="ail-desc">${esc(CTA.description.replace("{count}", count))}</div></div>
+      <div class="ail-desc">${esc(CTA.description)}</div></div>
     <div class="ail-body">
       <a class="ail-btn primary" href="${CTA.programmeLink}" target="_blank" rel="noopener noreferrer">Join AI Lodge<span>→</span></a>
       <a class="ail-btn" href="${CTA.showcaseLink}" target="_blank" rel="noopener noreferrer">Explore other projects<span>→</span></a>
