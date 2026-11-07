@@ -1,85 +1,109 @@
-"""groovyeverywhere demo API (Cloud Run). API only: the page is on Vercel (web/).
+"""groovyeverywhere demo API (Hugging Face Space, Docker, port 8080). API only: the page is on Vercel (web/).
 
-Pick a song from the pool and get the two lists the booth demo shows: "closest in sound" and "sound, plus what you
-care about" (mood / rhythm / instruments, every chosen feature in the top 35%), filtered by language. The ranking is
-the student's own code, unchanged: recommend_song.recommend_query with blind_test, scoring and match. This module
-only loads the pool from the slim data files (api/export_pool.py) instead of the booth machine's results/ folder.
-No model runs at serve time (the songs were analysed offline with Essentia) and no audio is involved.
+Two ways in, both answered by the student's own code, unchanged:
+  * bring a song: a visitor uploads or records a clip; capture_server.clip_query() runs the full Essentia analysis
+    (Sound, instruments, mood, rhythm) exactly as the booth demo's tab capture does, then the audio is deleted;
+  * start from a pool song: its stored numbers (results/<key>.npz).
+Then recommend_song.recommend_query() ranks the pool: rescaled Sound cosine over the whole song, 3 parts and every
+~30 s stretch, plus the chosen features (top 35% each) and the language filter.
 
-    GET  /api/health
-    GET  /api/status                        {ready, pool}
-    GET  /api/search?q=<title or artist>    up to 8 pool songs
+The pool is Ryan's demo bundle (numbers only, no audio), kept in a private Hugging Face dataset and downloaded at
+startup with a read-only token (Space secret HF_DATA_TOKEN). Only results/, the pool lists and the two AI lists are
+unpacked from it; nothing in it is executed.
+
+    GET  /api/health                        always 200 (the pool may still be loading)
+    GET  /api/status                        {ready, pool, error}
+    GET  /api/search?q=                     up to 8 pool songs
     GET  /api/samples                       one well-known song from each of the six biggest style groups
-    POST /api/recommend                     {key, features: [...], languages: [...]}
+    POST /api/recommend                     {key, features, languages}            free
+    POST /api/clip  (multipart: audio)      analyse a clip and recommend           [analyse]
+    POST /api/refine                        {token, features, languages}           re-rank a clip's result, free
 """
-import json
+import collections
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
 import time
+import uuid
+import zipfile
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)  # the student's modules live in the repository root
 
-import blind_test as bt  # noqa: E402
-import demo_server  # noqa: E402  (helpers only: shape, mood_label, tempo_text, auto_samples, yt_id_of)
-import match  # noqa: E402
-import recommend_song  # noqa: E402
-import scoring  # noqa: E402
+import demo_server  # noqa: E402  (helpers only: shape, build_heard, auto_samples, yt_id_of, messages, limits)
+from api.rate_limit import check_rate_limit  # noqa: E402
 
-DATA = os.environ.get("GROOVY_DATA_DIR") or os.path.join(ROOT, "api", "data")
-K = 6  # songs per list, as on the booth page
+DATA_REPO = os.environ.get("GROOVY_DATA_REPO", "smubiainfrastructure/ail-ay2627-s1-ryan-groovyeverywhere-data")
+DATA_FILE = os.environ.get("GROOVY_DATA_FILE", "groovy-demo-bundle.zip")
+K = 6                                # songs per list, as on the booth page
+MAX_UPLOAD = 15 * 1024 * 1024        # bytes
+CLIP_SECONDS = 60                    # only the first minute of an upload is analysed (the booth's captures are 30 s)
+KEEP_RESULTS = 300                   # clip results kept for chip changes
 SEARCH_LIMIT = 8
+# Bundle members that may be unpacked: the numbers and lists the recommender reads. Anything else is ignored.
+ALLOWED = re.compile(r"^(results/[A-Za-z0-9_.\-]+\.(npz|csv)|results/meta/[A-Za-z0-9_.\-]+\.json|pool_[a-z_]+\.csv|ai_(keep|block)\.txt)$")
+
+state = {"ready": False, "pool": 0, "error": "", "stage": "starting"}
+analysis_lock = threading.Lock()     # one Essentia analysis at a time (2 vCPUs)
+results = collections.OrderedDict()  # token -> (query, meta) for /api/refine
+results_lock = threading.Lock()
+INSTRUMENTS: list[str] = []
 
 
-def load_pool():
-    """Builds the dict blind_test.pool() returns, from pool.npz + pool.json, and installs it (and the Sound scale) as
-    the student's module caches so recommend_query reads it. The ~30 s stretch vectors are not shipped (see the
-    README): their result for each starting song is precomputed (stretch_*.npy), and window_sound() reads that row."""
+def fetch_bundle():
+    """Downloads the bundle zip from the private dataset and unpacks the allowed members into the repo root."""
+    if os.path.exists(os.path.join(ROOT, "results", "index.csv")):
+        return  # already unpacked (a restart of the same container, or local development)
+    from huggingface_hub import hf_hub_download
+
+    token = os.environ.pop("HF_DATA_TOKEN", "") or os.environ.pop("HF_TOKEN", "") or None
+    tmp = tempfile.mkdtemp(prefix="groovy_bundle_")
+    try:
+        path = hf_hub_download(DATA_REPO, DATA_FILE, repo_type="dataset", token=token, local_dir=tmp)
+        with zipfile.ZipFile(path) as z:
+            members = [m for m in z.namelist() if ALLOWED.match(m)]
+            for m in members:
+                z.extract(m, ROOT)
+        print(f"bundle: {len(members)} files unpacked", flush=True)
+    finally:
+        token = None
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def warm():
+    """What the booth demo does before it opens: fetch the numbers, build the pool, load the ~30 s stretch index."""
+    global INSTRUMENTS
     t0 = time.time()
-    with open(os.path.join(DATA, "pool.json"), encoding="utf-8") as f:
-        text = json.load(f)
-    P = {k: v for k, v in text.items() if k != "meta"}
-    with np.load(os.path.join(DATA, "pool.npz"), allow_pickle=False) as d:
-        for k in ("whole", "parts", "inst", "inst_parts", "va_vg", "va_mc", "va_mc_parts", "listens",
-                  "bpm", "confidence", "steadiness", "busyness"):
-            P[k] = d[k].astype(np.float32)
-        scale = (d["scale_mu"], d["scale_sd"])
-    P["from"] = "files"
-    match.use_scale_sources(bt.POOL_SOURCES)  # as blind_test.pool() does, before anything is rescaled
-    match._scale[match._scale_sources] = scale
-    P["scale"] = scale
-    P["whole_z"] = scoring.scale_sound(P["whole"], scale).astype(np.float32)
-    P["parts_z"] = scoring.scale_sound(P["parts"], scale).astype(np.float32)
-    P = bt._finish(P)
-    bt._pool = P
-    match._win_error = "the ~30 s stretch vectors are not part of the hosted demo (see stretch_sound)"
-    print(f"pool: {len(P['key'])} songs loaded in {time.time() - t0:.1f}s (mood model: {P['mood_kind']})", flush=True)
-    return P, text["meta"]
+    try:
+        state["stage"] = "downloading the song pool"
+        fetch_bundle()
+        state["stage"] = "loading the song pool"
+        import blind_test as bt
+        import match
+        state["pool"] = len(bt.pool()["key"])
+        state["stage"] = "loading the ~30 s stretch index"
+        match.windows()
+        match.windows(False)
+        try:
+            import models
+            INSTRUMENTS = [c.lower().replace(" ", "").replace("_", "") for c in models.classes("instruments")]
+        except Exception:
+            INSTRUMENTS = []
+        state["ready"], state["stage"] = True, "ready"
+        print(f"ready: {state['pool']} pool songs in {time.time() - t0:.0f}s", flush=True)
+    except BaseException as e:  # keep serving /api/health and report the problem on /api/status
+        state["error"], state["stage"] = f"{type(e).__name__}: {str(e)[:200]}", "failed"
+        print(f"!! warm-up failed: {state['error']}", flush=True)
 
-
-POOL, META = load_pool()
-STRETCH = {scaled: np.load(os.path.join(DATA, f"stretch_{'scaled' if scaled else 'plain'}.npy"), mmap_mode="r")
-           for scaled in (True, False)}
-
-
-def stretch_sound(q, P, scaled=True):
-    """blind_test.window_sound() for a pool song: its best ~30 s stretch similarity to every pool song, read from the
-    table api/export_pool.py made with the student's own match.windows() (int16 / 32767; -32768 = no stretch = -2)."""
-    row = q.get("_row")
-    if row is None:
-        return None
-    r = np.asarray(STRETCH[scaled][row])
-    return np.where(r == -32768, -2.0, r / 32767.0).astype(np.float32)
-
-
-bt.window_sound = stretch_sound  # recommend_query() and blind_test.raw_sound() call it through the module
-INDEX = {k: i for i, k in enumerate(POOL["key"])}
-SEARCH_TEXT = [f"{t} {a}".lower() for t, a in zip(POOL["title"], POOL["artist_name"])]
 
 app = FastAPI(title="groovyeverywhere demo API", docs_url=None, redoc_url=None)
 origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
@@ -91,25 +115,47 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def start_warm():
+    threading.Thread(target=warm, daemon=True).start()
+
+
+def need_ready():
+    if not state["ready"]:
+        raise HTTPException(423, state["error"] or "The song pool is still loading. Try again in a minute.")
+
+
+def pool():
+    import blind_test as bt
+    return bt.pool()
+
+
 def song(i):
-    return dict(key=POOL["key"][i], title=POOL["title"][i], artist=POOL["artist_name"][i],
-                yt=demo_server.yt_id_of(POOL["link"][i]), link=POOL["link"][i])
-
-
-def query_of(i):
-    """blind_test.query_from_analysis() for a pool song, from the same numbers (rhythm is already finite in the pool)."""
-    return dict(_row=i, whole=POOL["whole"][i].astype(np.float64), va_vg=POOL["va_vg"][i].astype(np.float64),
-                va_mc=POOL["va_mc"][i].astype(np.float64), inst=POOL["inst"][i].astype(np.float64),
-                **{f: float(POOL[f][i]) for f in ("bpm", "confidence", "steadiness", "busyness")})
+    P = pool()
+    return dict(key=P["key"][i], title=P["title"][i], artist=P["artist_name"][i],
+                yt=demo_server.yt_id_of(P["link"][i]), link=P["link"][i])
 
 
 def heard(q):
-    """The booth page's "what we heard" strip, without instrument names (the model's class list is not shipped)."""
-    v, a = q["va_vg"]
-    if v != v or a != a:
-        v, a = q["va_mc"]
-    return dict(mood=demo_server.mood_label(float(v), float(a)), happiness=round(float(v), 1), energy=round(float(a), 1),
-                tempo=demo_server.tempo_text(q["bpm"], q["confidence"]), instruments=[])
+    try:
+        return demo_server.build_heard(q, INSTRUMENTS) if INSTRUMENTS else {}
+    except Exception:  # the strip is a bonus: never let it break a result
+        return {}
+
+
+def lists(q, meta, features, languages):
+    import blind_test as bt
+    import recommend_song
+    feats = [f for f in features if f in demo_server.VALID_FEATURES]
+    langs = [lang for lang in languages if lang in demo_server.VALID_LANGUAGES]
+    if not feats or not langs:
+        raise HTTPException(400, "Choose at least one feature and one language.")
+    res = demo_server.shape(recommend_song.recommend_query(q, meta, K, "+".join(feats), languages=langs), K)
+    bs = res.get("best_sound")
+    warning = ""
+    if bs is not None and bs < bt.WEAK_COSINE:
+        warning = demo_server.CAPTURE_MSG if not meta else demo_server.POOL_MSG
+    return res, warning
 
 
 @app.get("/api/health")
@@ -119,23 +165,28 @@ def health():
 
 @app.get("/api/status")
 def status():
-    return {"ready": True, "pool": len(POOL["key"])}
+    return {"ready": state["ready"], "pool": state["pool"], "stage": state["stage"], "error": state["error"]}
 
 
 @app.get("/api/search")
 def search(q: str = Query("", max_length=100)):
+    need_ready()
     words = q.lower().split()
     if not words:
         return {"songs": []}
-    hits = [i for i, t in enumerate(SEARCH_TEXT) if all(w in t for w in words)]
-    hits.sort(key=lambda i: -(POOL["listens"][i] if POOL["listens"][i] == POOL["listens"][i] else -1))  # best known first
+    P = pool()
+    hits = [i for i, (t, a) in enumerate(zip(P["title"], P["artist_name"])) if all(w in f"{t} {a}".lower() for w in words)]
+    hits.sort(key=lambda i: -(P["listens"][i] if P["listens"][i] == P["listens"][i] else -1))  # best known first
     return {"songs": [song(i) for i in hits[:SEARCH_LIMIT]]}
 
 
 @app.get("/api/samples")
 def samples():
-    picks = demo_server.auto_samples(POOL["key"], POOL["title"], POOL["artist_name"], POOL["group"], POOL["listens"])
-    return {"songs": [song(INDEX[s["key"]]) for s in picks]}
+    need_ready()
+    P = pool()
+    picks = demo_server.auto_samples(P["key"], P["title"], P["artist_name"], P["group"], P["listens"])
+    index = {k: i for i, k in enumerate(P["key"])}
+    return {"songs": [song(index[s["key"]]) for s in picks]}
 
 
 class RecommendBody(BaseModel):
@@ -146,16 +197,80 @@ class RecommendBody(BaseModel):
 
 @app.post("/api/recommend")
 def recommend(body: RecommendBody):
-    i = INDEX.get(body.key)
-    if i is None:
+    """A pool song as the starting song: its stored numbers, as the booth demo's sample buttons do."""
+    need_ready()
+    import blind_test as bt
+    from results_index import RES, read_meta
+    P = pool()
+    if body.key not in set(P["key"]):
         raise HTTPException(404, "That song isn't in the pool.")
-    feats = [f for f in body.features if f in demo_server.VALID_FEATURES]
-    langs = [lang for lang in body.languages if lang in demo_server.VALID_LANGUAGES]
-    if not feats or not langs:
-        raise HTTPException(400, "Choose at least one feature and one language.")
-    q = query_of(i)
-    res = recommend_song.recommend_query(q, META[i] or {}, K, "+".join(feats), languages=langs)
-    return {"input": dict(song(i), heard=heard(q)), "results": demo_server.shape(res, K)}
+    with np.load(os.path.join(RES, f"{body.key}.npz"), allow_pickle=False) as d:
+        q = bt.query_from_analysis(dict(d))
+    res, warning = lists(q, read_meta(body.key) or {}, body.features, body.languages)
+    i = P["key"].index(body.key)
+    return {"input": dict(song(i), kind="pool"), "heard": heard(q), "results": res, "warning": warning}
+
+
+def to_wav(src, dst):
+    """Any browser recording or audio file -> 16-bit mono 44.1 kHz WAV of at most CLIP_SECONDS (the format the
+    booth's capture page sends, so capture_server.even_out_volume() can level it)."""
+    p = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-t", str(CLIP_SECONDS),
+                        "-vn", "-ac", "1", "-ar", "44100", "-sample_fmt", "s16", dst], capture_output=True, timeout=120)
+    if p.returncode != 0 or not os.path.exists(dst) or os.path.getsize(dst) < 44 + 44100 * 2 * 3:
+        raise HTTPException(400, "That file couldn't be read as audio, or it is shorter than 3 seconds.")
+
+
+@app.post("/api/clip")
+def clip(request: Request, audio: UploadFile = File(...), features: str = Form("mood+rhythm+instruments"),
+         languages: str = Form("+".join(demo_server.DEFAULT_LANGUAGES))):
+    """Bring a song: analyse an uploaded or recorded clip with the student's models, then recommend."""
+    need_ready()
+    data = audio.file.read(MAX_UPLOAD + 1)
+    if not data or len(data) > MAX_UPLOAD:
+        raise HTTPException(413, "Send an audio clip of up to 15 MB (about a minute is plenty).")
+    if analysis_lock.locked():
+        raise HTTPException(423, "Another visitor's song is being analysed. Try again in a few seconds.")
+    import blind_test as bt
+    import capture_server
+    check_rate_limit(request, "analyse")  # after the cheap checks, right before the models run
+    t0 = time.time()
+    with analysis_lock, tempfile.TemporaryDirectory(prefix="hg_clip_") as d:  # the audio is deleted when this block ends
+        src, wav = os.path.join(d, "upload"), os.path.join(d, "clip.wav")
+        with open(src, "wb") as f:
+            f.write(data)
+        del data
+        to_wav(src, wav)
+        sig, feats = capture_server.clip_query(wav)
+    if feats is None:
+        raise HTTPException(422, "The recording was (almost) silent. Play the song louder or closer to the microphone.")
+    q = bt.query_from_analysis(feats)
+    res, warning = lists(q, {}, features.split("+"), languages.split("+"))
+    token = uuid.uuid4().hex
+    with results_lock:
+        results[token] = q
+        while len(results) > KEEP_RESULTS:
+            results.popitem(last=False)
+    seconds = round(time.time() - t0, 1)
+    return {"token": token, "input": dict(kind="clip", title="your song", artist="", seconds=seconds), "heard": heard(q),
+            "results": res, "warning": warning}
+
+
+class RefineBody(BaseModel):
+    token: str = Field(max_length=40)
+    features: list[str] = Field(max_length=3)
+    languages: list[str] = Field(max_length=5)
+
+
+@app.post("/api/refine")
+def refine(body: RefineBody):
+    """Other features or languages for a clip already analysed: re-ranks the stored numbers, no new analysis."""
+    need_ready()
+    with results_lock:
+        q = results.get(body.token)
+    if q is None:
+        raise HTTPException(410, "This result has expired. Bring the song again.")
+    res, warning = lists(q, {}, body.features, body.languages)
+    return {"results": res, "warning": warning}
 
 
 @app.get("/")

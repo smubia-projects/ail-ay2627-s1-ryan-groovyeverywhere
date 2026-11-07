@@ -17,6 +17,7 @@ nohup.out
 *.bak
 *.tmp
 .env
+!.env.example
 .venv-voice/
 ai_check_sheet*.csv
 # Never commit: a signed-in YouTube cookies file (a credential), demo bundles and backups, filled-in listening sheets, local run outputs
@@ -36,5 +37,3 @@ voice_dev_choice.json
 report.html
 evidence_summary.json
 
-# AI Lodge demo API: the pool data comes from a GitHub release (api/fetch_data.py), never from git
-api/data/

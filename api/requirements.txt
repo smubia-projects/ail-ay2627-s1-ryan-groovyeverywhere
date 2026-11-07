@@ -1,4 +1,9 @@
-# The hosted demo API only (the analysis pipeline's requirements are in ../requirements.txt).
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
-numpy==2.2.6
+# The hosted demo API (Hugging Face Space, Python 3.14). essentia-tensorflow is pinned to the build the student
+# analysed the pool with (../requirements.txt), so a visitor's clip gets the same numbers as the pool songs.
+essentia-tensorflow==2.1b6.dev1438
+numpy
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+huggingface-hub==2.4.0
+upstash-redis==1.8.0
