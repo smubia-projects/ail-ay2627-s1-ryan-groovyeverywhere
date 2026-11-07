@@ -232,15 +232,16 @@ def clip(request: Request, audio: UploadFile = File(...), features: str = Form("
         raise HTTPException(423, "Another visitor's song is being analysed. Try again in a few seconds.")
     import blind_test as bt
     import capture_server
-    check_rate_limit(request, "analyse")  # after the cheap checks, right before the models run
     t0 = time.time()
-    with analysis_lock, tempfile.TemporaryDirectory(prefix="hg_clip_") as d:  # the audio is deleted when this block ends
+    with tempfile.TemporaryDirectory(prefix="hg_clip_") as d:  # the audio is deleted when this block ends
         src, wav = os.path.join(d, "upload"), os.path.join(d, "clip.wav")
         with open(src, "wb") as f:
             f.write(data)
         del data
-        to_wav(src, wav)
-        sig, feats = capture_server.clip_query(wav)
+        to_wav(src, wav)  # a file that isn't audio is rejected here, before it counts
+        check_rate_limit(request, "analyse")  # after the cheap checks, right before the models run
+        with analysis_lock:
+            sig, feats = capture_server.clip_query(wav)
     if feats is None:
         raise HTTPException(422, "The recording was (almost) silent. Play the song louder or closer to the microphone.")
     q = bt.query_from_analysis(feats)
